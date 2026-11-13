@@ -21,7 +21,7 @@
   <section class="auth-card">
     <div class="auth-logo" aria-hidden="true">日</div>
     <h1 id="authTitle">登入日序</h1>
-    <p class="auth-copy">請使用 Google 帳號登入，開始查看與管理你的每日行程。</p>
+    <p class="auth-copy">使用 Google 或 LINE 帳號登入，開始查看與管理你的每日行程。</p>
     <div class="auth-buttons"><button id="googleSignIn" class="google-signin" type="button" disabled><span class="google-mark" aria-hidden="true">G</span><span>正在連線 Firebase…</span></button><button id="lineSignIn" class="google-signin line-signin" type="button"><span class="line-mark" aria-hidden="true">LINE</span><span>使用 LINE 登入</span></button></div>
     <p id="authError" class="auth-error" role="status" aria-live="polite"></p>
   </section>
@@ -58,10 +58,14 @@ const userPhoto = document.getElementById('userPhoto');
 const signOutButton = document.getElementById('googleSignOut');
 const authProviderLabel = document.getElementById('authProvider');
 const lineButton = document.getElementById('lineSignIn');
-const LINE_LIFF_ID = 'YOUR_LINE_LIFF_ID';
+const LINE_LIFF_ID = '2012589296-JHY03hMG';
+let lineProfile = null;
+let lineLiffReady = false;
 function showAuthError(message) { authError.textContent = message; }
 function setSignedIn(user) {
-  const signedIn = Boolean(user);
+  const activeUser = user || lineProfile;
+  const isLineSession = !user && Boolean(lineProfile);
+  const signedIn = Boolean(activeUser);
   authGate.hidden = signedIn;
   appContent.hidden = !signedIn;
   appContent.inert = !signedIn;
@@ -69,10 +73,11 @@ function setSignedIn(user) {
   showAuthError('');
   signOutButton.disabled = false;
   if (signedIn) {
-    userName.textContent = user.displayName || user.email || '使用者';
-    authProviderLabel.textContent = user.providerData?.some(p => p.providerId === 'line') ? 'LINE' : 'Google';
-    userPhoto.hidden = !user.photoURL;
-    if (user.photoURL) userPhoto.src = user.photoURL;
+    userName.textContent = activeUser.displayName || activeUser.email || '使用者';
+    authProviderLabel.textContent = isLineSession ? 'LINE' : 'Google';
+    const photoURL = isLineSession ? activeUser.pictureUrl : activeUser.photoURL;
+    userPhoto.hidden = !photoURL;
+    if (photoURL) userPhoto.src = photoURL;
     googleButton.disabled = false;
     googleButtonLabel.textContent = '切換 Google 帳號';
   } else {
@@ -97,37 +102,47 @@ try {
   });
   googleButton.disabled = false;
   googleButtonLabel.textContent = '使用 Google 帳號登入';
-  if (LINE_LIFF_ID.startsWith('YOUR_')) {
-    lineButton.disabled = true;
-    lineButton.querySelector('span:last-child').textContent = 'LINE 登入設定待完成';
-    lineButton.title = '先在 LINE Developers 建立 LINE Login Channel 與 LIFF App，並提供 LIFF ID。';
-    lineButton.addEventListener('click', () => showAuthError('請先提供 LINE Developers 產生的 LIFF ID；LIFF ID 不能由網頁自行產生。'));
-  } else {
+  lineButton.disabled = false;
+  if (!LINE_LIFF_ID.startsWith('YOUR_')) {
     const liffScript = document.createElement('script');
     liffScript.src = 'https://static.line-scdn.net/liff/edge/2/sdk.js';
     liffScript.onload = async () => {
       try {
         await window.liff.init({ liffId: LINE_LIFF_ID });
-        lineButton.disabled = false;
-        lineButton.addEventListener('click', async () => {
-          if (!window.liff.isLoggedIn()) { window.liff.login({ redirectUri: location.href }); return; }
-          try {
-            const profile = await window.liff.getProfile();
-            showAuthError(`LINE 已登入：${profile.displayName}。登入日序的 Firebase 帳號連結仍待 LINE OIDC 設定。`);
-          } catch (error) {
-            console.error('LINE sign-in error:', error);
-            showAuthError('LINE 登入失敗，請確認 Firebase 已設定 LINE OIDC。');
-          }
-        });
+        lineLiffReady = true;
+        if (window.liff.isLoggedIn()) lineProfile = await window.liff.getProfile();
+        setSignedIn(auth.currentUser);
       } catch (error) {
         console.error('LIFF init error:', error);
-        lineButton.disabled = true;
-        lineButton.querySelector('span:last-child').textContent = 'LINE 登入初始化失敗';
       }
     };
-    liffScript.onerror = () => { lineButton.disabled = true; lineButton.querySelector('span:last-child').textContent = '無法載入 LINE 登入'; };
+    liffScript.onerror = () => console.error('Unable to load the LINE LIFF SDK.');
     document.head.append(liffScript);
   }
+  lineButton.addEventListener('click', async () => {
+    lineButton.disabled = true;
+    showAuthError('');
+    try {
+      if (location.protocol !== 'https:') {
+        showAuthError('LINE 登入需要從已部署的 HTTPS 網址開啟日序。');
+      } else if (LINE_LIFF_ID.startsWith('YOUR_')) {
+        showAuthError('請先在 LINE Developers 建立 LIFF App，並填入它的 LIFF ID。');
+      } else if (!lineLiffReady) {
+        showAuthError('LINE 登入尚未初始化，請確認 LIFF ID 與網站網址設定後重試。');
+      } else if (!window.liff.isLoggedIn()) {
+        window.liff.login({ redirectUri: location.href });
+        return;
+      } else {
+        lineProfile = await window.liff.getProfile();
+        setSignedIn(auth.currentUser);
+      }
+    } catch (error) {
+      console.error('LINE sign-in error:', error);
+      showAuthError('LINE 登入暫時失敗，請確認 LINE Developers 的 LIFF 設定後再試。');
+    } finally {
+      lineButton.disabled = false;
+    }
+  });
   googleButton.addEventListener('click', async () => {
     googleButton.disabled = true;
     showAuthError('');
@@ -146,8 +161,12 @@ try {
   });
   signOutButton.addEventListener('click', async () => {
     signOutButton.disabled = true;
-    try { await signOut(auth); }
-    catch (error) { console.error('Google sign-out error:', error); showAuthError('登出暫時失敗，請再試一次。'); signOutButton.disabled = false; }
+    try {
+      if (window.liff?.isLoggedIn()) window.liff.logout();
+      lineProfile = null;
+      await signOut(auth);
+    }
+    catch (error) { console.error('Sign-out error:', error); showAuthError('登出暫時失敗，請再試一次。'); signOutButton.disabled = false; }
   });
 } catch (error) {
   setSignedIn(null);

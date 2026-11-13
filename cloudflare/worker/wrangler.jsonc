@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "daily-sequence-sync",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-13",
+  "workers_dev": true,
+  "vars": {
+    "FIREBASE_PROJECT_ID": "daily-sequence",
+    "LINE_LOGIN_CHANNEL_ID": "REPLACE_WITH_LINE_LOGIN_CHANNEL_ID",
+    "ALLOWED_ORIGIN": "https://winebowl0516.github.io"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "daily-sequence-data",
+      "database_id": "REPLACE_AFTER_CREATING_D1_DATABASE",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
